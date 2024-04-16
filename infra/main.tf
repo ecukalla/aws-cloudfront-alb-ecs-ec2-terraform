@@ -3,8 +3,8 @@ data "aws_availability_zones" "available" {
 }
 
 locals {
-  azs_count   = 2
-  azs_names   = data.aws_availability_zones.available.names
+  azs_count = 2
+  azs_names = data.aws_availability_zones.available.names
 }
 
 # VPC
@@ -96,7 +96,7 @@ resource "aws_iam_instance_profile" "ecs_node" {
 
 # ECS Node SG
 resource "aws_security_group" "ecs_node_sg" {
-  name_prefix = "ecs-node-sg"
+  name_prefix = "ecs-node-sg-"
   vpc_id      = aws_vpc.main.id
 
   egress {
@@ -127,8 +127,8 @@ resource "aws_launch_template" "ecs_ec2_lt" {
   }
 
   user_data = base64encode(<<-EOF
-    #!/bin/bash
-    echo ECS_CLUSTER=${aws_ecs_cluster.main.name} >> /etc/ecs/ecs.config;
+      #!/bin/bash
+      echo ECS_CLUSTER=${aws_ecs_cluster.main.name} >> /etc/ecs/ecs.config;
   EOF
   )
 }
@@ -149,7 +149,7 @@ resource "aws_autoscaling_group" "ecs_asg" {
   }
 
   tag {
-    key                 = "name"
+    key                 = "Name"
     value               = "ecs-cluster"
     propagate_at_launch = true
   }
@@ -178,7 +178,7 @@ resource "aws_ecs_capacity_provider" "main" {
   }
 }
 
-resource "aws_ecs_cluster_capacity_providers" "ecs_cluster_cap_prov" {
+resource "aws_ecs_cluster_capacity_providers" "main" {
   cluster_name       = aws_ecs_cluster.main.name
   capacity_providers = [aws_ecs_capacity_provider.main.name]
 
@@ -266,13 +266,13 @@ resource "aws_ecs_task_definition" "app" {
 
       environment = [
         {
-          name  = "EXAMPLE"
+          name  = "EXAMPLE",
           value = "example"
         }
-      ]
+      ],
 
       logConfiguration = {
-        logDriver = "awsLogs",
+        logDriver = "awslogs",
         options = {
           "awslogs-region"        = var.default_aws_region,
           "awslogs-group"         = aws_cloudwatch_log_group.ecs.name,
@@ -400,6 +400,47 @@ resource "aws_lb_listener" "http" {
   }
 }
 
-output "alb_url" {
-  value = aws_lb.main.dns_name
+# --- ECS Auto Scaling Target ---
+resource "aws_appautoscaling_target" "ecs_target" {
+  service_namespace  = "ecs"
+  scalable_dimension = "ecs:service:DesiredCount"
+  resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.app.name}"
+  min_capacity       = 2
+  max_capacity       = 5
+}
+
+resource "aws_appautoscaling_policy" "ecs_target_cpu" {
+  name               = "application-scaling-policy-cpu"
+  policy_type        = "TargetTrackingScaling"
+  service_namespace  = aws_appautoscaling_target.ecs_target.service_namespace
+  resource_id        = aws_appautoscaling_target.ecs_target.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs_target.scalable_dimension
+
+  target_tracking_scaling_policy_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+
+    target_value       = 80
+    scale_in_cooldown  = 300
+    scale_out_cooldown = 300
+  }
+}
+
+resource "aws_appautoscaling_policy" "ecs_target_memory" {
+  name               = "application-scaling-policy-memory"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.ecs_target.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs_target.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.ecs_target.service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageMemoryUtilization"
+    }
+
+    target_value       = 80
+    scale_in_cooldown  = 300
+    scale_out_cooldown = 300
+  }
 }

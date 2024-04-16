@@ -12,7 +12,7 @@ provider "aws" {
 
   default_tags {
     tags = {
-      service     = "aws-cloudfront-alb-ecs-ec2"
+      service = "aws-cloudfront-alb-ecs-ec2"
     }
   }
 }
